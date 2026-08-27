@@ -1,6 +1,53 @@
+import base64
+import binascii
+import re
 from datetime import datetime, timezone
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, computed_field, field_validator
+
+
+PHOTO_MAX_BYTES = 2 * 1024 * 1024
+PHOTO_MAX_DATA_URL_LENGTH = ((PHOTO_MAX_BYTES + 2) // 3) * 4 + 100
+PHOTO_MIME_TYPES = ("image/jpeg", "image/png", "image/webp", "image/gif")
+_PHOTO_DATA_URL = re.compile(
+    rf"^data:(?P<mime>{'|'.join(re.escape(mime) for mime in PHOTO_MIME_TYPES)});base64,(?P<data>[A-Za-z0-9+/]*={{0,2}})$"
+)
+
+
+def _has_matching_image_signature(mime: str, data: bytes) -> bool:
+    signatures = {
+        "image/jpeg": data.startswith(b"\xff\xd8\xff"),
+        "image/png": data.startswith(b"\x89PNG\r\n\x1a\n"),
+        "image/gif": data.startswith((b"GIF87a", b"GIF89a")),
+        "image/webp": len(data) >= 12 and data.startswith(b"RIFF") and data[8:12] == b"WEBP",
+    }
+    return signatures[mime]
+
+
+def _validate_photo(value: str | None) -> str | None:
+    if value is None:
+        return None
+
+    value = value.strip()
+    if not value:
+        return None
+
+    match = _PHOTO_DATA_URL.fullmatch(value)
+    if not match:
+        raise ValueError("photo must be a base64-encoded JPEG, PNG, WebP, or GIF data URL")
+
+    try:
+        data = base64.b64decode(match.group("data"), validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("photo contains invalid base64 data") from exc
+
+    if not data:
+        raise ValueError("photo must not be empty")
+    if len(data) > PHOTO_MAX_BYTES:
+        raise ValueError("photo must be 2 MB or smaller")
+    if not _has_matching_image_signature(match.group("mime"), data):
+        raise ValueError("photo content does not match its declared image type")
+    return value
 
 
 class ContactBase(BaseModel):
@@ -44,6 +91,11 @@ class ContactBase(BaseModel):
         description="Role held at the company.",
         examples=["Mathematician"],
     )
+    photo: str | None = Field(
+        default=None,
+        max_length=PHOTO_MAX_DATA_URL_LENGTH,
+        description="Contact photo as a base64 data URL (JPEG, PNG, WebP, or GIF; maximum 2 MB).",
+    )
     address: str | None = Field(
         default=None,
         max_length=300,
@@ -70,6 +122,11 @@ class ContactBase(BaseModel):
         examples=["Met at the SF hackathon."],
     )
 
+    @field_validator("photo")
+    @classmethod
+    def _photo_is_safe_image(cls, value: str | None) -> str | None:
+        return _validate_photo(value)
+
 
 _FULL_EXAMPLE = {
     "first_name": "Ada",
@@ -78,6 +135,10 @@ _FULL_EXAMPLE = {
     "phone": "+1-415-555-0101",
     "company": "Analytical Engines",
     "job_title": "Mathematician",
+    "photo": (
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC"
+        "AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    ),
     "address": "1 Market St, Suite 400",
     "city": "San Francisco",
     "state": "CA",
@@ -128,12 +189,22 @@ class ContactUpdate(BaseModel):
     phone: str | None = Field(default=None, max_length=40, description="New phone number.")
     company: str | None = Field(default=None, max_length=200, description="New company.")
     job_title: str | None = Field(default=None, max_length=200, description="New job title.")
+    photo: str | None = Field(
+        default=None,
+        max_length=PHOTO_MAX_DATA_URL_LENGTH,
+        description="New contact photo as a base64 data URL; send null to remove it.",
+    )
     address: str | None = Field(default=None, max_length=300, description="New street address.")
     city: str | None = Field(default=None, max_length=120, description="New city.")
     state: str | None = Field(default=None, max_length=120, description="New state or region.")
     postal_code: str | None = Field(default=None, max_length=20, description="New postal code.")
     country: str | None = Field(default=None, max_length=120, description="New country.")
     notes: str | None = Field(default=None, description="New notes; replaces the existing text.")
+
+    @field_validator("photo")
+    @classmethod
+    def _photo_is_safe_image(cls, value: str | None) -> str | None:
+        return _validate_photo(value)
 
 
 class ContactRead(ContactBase):

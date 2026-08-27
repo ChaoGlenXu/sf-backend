@@ -107,9 +107,11 @@ also read):
 (case-insensitive). Everything else is optional.
 
 ```
-first_name, last_name, email, phone, company, job_title,
+first_name, last_name, email, phone, company, job_title, photo,
 address, city, state, postal_code, country, notes
 ```
+
+`photo` accepts a JPEG, PNG, WebP, or GIF encoded as a base64 data URL, up to 2 MB.
 
 Responses add `id`, `full_name`, `created_at`, and `updated_at` (UTC).
 
