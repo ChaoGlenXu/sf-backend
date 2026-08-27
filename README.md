@@ -163,6 +163,16 @@ curl -X DELETE http://127.0.0.1:8000/api/v1/contacts/1
 Tests run against their own empty in-memory database with seeding disabled
 (see `tests/conftest.py`).
 
+### Quick smoke test
+
+After starting the API, verify the seeded database without changing any data:
+
+```bash
+curl http://127.0.0.1:8000/health
+```
+
+The response should report `"status":"ok"` and three contacts.
+
 ## Layout
 
 ```
