@@ -1,4 +1,10 @@
+import base64
+
+from app.schemas import PHOTO_MAX_BYTES
+
+
 BASE = "/api/v1/contacts"
+TINY_PNG = "data:image/png;base64,iVBORw0KGgo="
 
 
 def test_health(client):
@@ -10,12 +16,13 @@ def test_health(client):
 
 
 def test_create_contact(client, payload):
-    response = client.post(BASE, json=payload)
+    response = client.post(BASE, json={**payload, "photo": TINY_PNG})
     assert response.status_code == 201
     body = response.json()
     assert body["id"] > 0
     assert body["email"] == "ada@example.com"
     assert body["full_name"] == "Ada Lovelace"
+    assert body["photo"] == TINY_PNG
     assert body["created_at"] and body["updated_at"]
 
 
@@ -26,6 +33,22 @@ def test_create_requires_valid_email(client, payload):
 
 def test_create_requires_names(client, payload):
     response = client.post(BASE, json={**payload, "first_name": ""})
+    assert response.status_code == 422
+
+
+def test_create_rejects_unsupported_or_disguised_photo(client, payload):
+    unsupported = client.post(BASE, json={**payload, "photo": "data:image/svg+xml;base64,PHN2Zz4="})
+    assert unsupported.status_code == 422
+
+    disguised = client.post(BASE, json={**payload, "photo": "data:image/png;base64,SGVsbG8="})
+    assert disguised.status_code == 422
+
+
+def test_create_rejects_photo_larger_than_two_megabytes(client, payload):
+    oversized = b"\x89PNG\r\n\x1a\n" + (b"\0" * (PHOTO_MAX_BYTES - 7))
+    encoded = base64.b64encode(oversized).decode()
+
+    response = client.post(BASE, json={**payload, "photo": f"data:image/png;base64,{encoded}"})
     assert response.status_code == 422
 
 
@@ -101,6 +124,18 @@ def test_patch_updates_only_sent_fields(client, payload):
     assert body["company"] == "Analytical Engines"
 
 
+def test_patch_can_add_and_remove_photo(client, payload):
+    contact_id = client.post(BASE, json=payload).json()["id"]
+
+    added = client.patch(f"{BASE}/{contact_id}", json={"photo": TINY_PNG})
+    assert added.status_code == 200
+    assert added.json()["photo"] == TINY_PNG
+
+    removed = client.patch(f"{BASE}/{contact_id}", json={"photo": None})
+    assert removed.status_code == 200
+    assert removed.json()["photo"] is None
+
+
 def test_patch_duplicate_email_conflicts(client, payload):
     first = client.post(BASE, json=payload).json()["id"]
     client.post(BASE, json={**payload, "email": "grace@example.com"})
@@ -124,6 +159,18 @@ def test_put_replaces_contact(client, payload):
     body = response.json()
     assert body["full_name"] == "Grace Hopper"
     assert body["company"] is None  # omitted fields are cleared by PUT
+
+
+def test_put_preserves_photo_when_client_resubmits_it(client, payload):
+    contact = client.post(BASE, json={**payload, "photo": TINY_PNG}).json()
+
+    response = client.put(
+        f"{BASE}/{contact['id']}",
+        json={**payload, "company": "New Company", "photo": contact["photo"]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["photo"] == TINY_PNG
 
 
 def test_put_missing_contact_returns_404(client):
