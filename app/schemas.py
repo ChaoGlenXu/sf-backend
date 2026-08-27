@@ -1,6 +1,51 @@
+import base64
+import binascii
+import re
 from datetime import datetime, timezone
+from io import BytesIO
 
+from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, computed_field, field_validator
+
+PHOTO_MAX_BYTES = 1_000_000
+PHOTO_MAX_LENGTH = 1_400_000
+PHOTO_DATA_URL_RE = re.compile(
+    r"^data:image/(png|jpeg|webp|gif);base64,([A-Za-z0-9+/]+={0,2})$"
+)
+PHOTO_FORMATS = {"png": "PNG", "jpeg": "JPEG", "webp": "WEBP", "gif": "GIF"}
+
+
+def _validate_photo(value: str | None) -> str | None:
+    if value is None:
+        return None
+
+    value = value.strip()
+    if not value:
+        return None
+
+    match = PHOTO_DATA_URL_RE.fullmatch(value)
+    if match is None:
+        raise ValueError("Photo must be a PNG, JPEG, WebP, or GIF data URL.")
+
+    try:
+        decoded = base64.b64decode(match.group(2), validate=True)
+    except binascii.Error as exc:
+        raise ValueError("Photo data is not valid base64.") from exc
+
+    if len(decoded) > PHOTO_MAX_BYTES:
+        raise ValueError("Photo must be 1 MB or smaller.")
+
+    try:
+        with Image.open(BytesIO(decoded)) as image:
+            detected_format = image.format
+            image.verify()
+    except (UnidentifiedImageError, OSError, SyntaxError) as exc:
+        raise ValueError("Photo data is not a valid image.") from exc
+
+    if detected_format != PHOTO_FORMATS[match.group(1)]:
+        raise ValueError("Photo data does not match its declared image type.")
+
+    return value
 
 
 class ContactBase(BaseModel):
@@ -44,6 +89,15 @@ class ContactBase(BaseModel):
         description="Role held at the company.",
         examples=["Mathematician"],
     )
+    photo: str | None = Field(
+        default=None,
+        max_length=PHOTO_MAX_LENGTH,
+        description=(
+            "Optional profile photo as a base64-encoded PNG, JPEG, WebP, or GIF "
+            "data URL. Decoded image data must be 1 MB or smaller."
+        ),
+        examples=["data:image/png;base64,iVBORw0KGgo="],
+    )
     address: str | None = Field(
         default=None,
         max_length=300,
@@ -70,6 +124,11 @@ class ContactBase(BaseModel):
         examples=["Met at the SF hackathon."],
     )
 
+    @field_validator("photo")
+    @classmethod
+    def _photo_data_url(cls, value: str | None) -> str | None:
+        return _validate_photo(value)
+
 
 _FULL_EXAMPLE = {
     "first_name": "Ada",
@@ -78,6 +137,7 @@ _FULL_EXAMPLE = {
     "phone": "+1-415-555-0101",
     "company": "Analytical Engines",
     "job_title": "Mathematician",
+    "photo": "data:image/png;base64,iVBORw0KGgo=",
     "address": "1 Market St, Suite 400",
     "city": "San Francisco",
     "state": "CA",
@@ -128,12 +188,22 @@ class ContactUpdate(BaseModel):
     phone: str | None = Field(default=None, max_length=40, description="New phone number.")
     company: str | None = Field(default=None, max_length=200, description="New company.")
     job_title: str | None = Field(default=None, max_length=200, description="New job title.")
+    photo: str | None = Field(
+        default=None,
+        max_length=PHOTO_MAX_LENGTH,
+        description="New profile photo data URL, or null to clear the photo.",
+    )
     address: str | None = Field(default=None, max_length=300, description="New street address.")
     city: str | None = Field(default=None, max_length=120, description="New city.")
     state: str | None = Field(default=None, max_length=120, description="New state or region.")
     postal_code: str | None = Field(default=None, max_length=20, description="New postal code.")
     country: str | None = Field(default=None, max_length=120, description="New country.")
     notes: str | None = Field(default=None, description="New notes; replaces the existing text.")
+
+    @field_validator("photo")
+    @classmethod
+    def _photo_data_url(cls, value: str | None) -> str | None:
+        return _validate_photo(value)
 
 
 class ContactRead(ContactBase):

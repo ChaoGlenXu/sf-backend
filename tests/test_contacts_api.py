@@ -1,4 +1,8 @@
 BASE = "/api/v1/contacts"
+PHOTO = (
+    "data:image/png;base64,"
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
 
 
 def test_health(client):
@@ -16,7 +20,39 @@ def test_create_contact(client, payload):
     assert body["id"] > 0
     assert body["email"] == "ada@example.com"
     assert body["full_name"] == "Ada Lovelace"
+    assert body["photo"] is None
     assert body["created_at"] and body["updated_at"]
+
+
+def test_create_contact_with_photo(client, payload):
+    response = client.post(BASE, json={**payload, "photo": PHOTO})
+    assert response.status_code == 201
+    assert response.json()["photo"] == PHOTO
+
+
+def test_create_rejects_invalid_photo(client, payload):
+    response = client.post(BASE, json={**payload, "photo": "https://example.com/photo.png"})
+    assert response.status_code == 422
+
+
+def test_create_rejects_non_image_photo_data(client, payload):
+    response = client.post(
+        BASE,
+        json={**payload, "photo": "data:image/png;base64,aGVsbG8="},
+    )
+    assert response.status_code == 422
+
+
+def test_create_rejects_mismatched_photo_type(client, payload):
+    mislabeled_photo = PHOTO.replace("data:image/png", "data:image/jpeg")
+    response = client.post(BASE, json={**payload, "photo": mislabeled_photo})
+    assert response.status_code == 422
+
+
+def test_create_rejects_oversized_photo(client, payload):
+    oversized = f"data:image/png;base64,{'a' * 1_333_336}"
+    response = client.post(BASE, json={**payload, "photo": oversized})
+    assert response.status_code == 422
 
 
 def test_create_requires_valid_email(client, payload):
@@ -92,13 +128,21 @@ def test_list_rejects_bad_sort_field(client):
 
 
 def test_patch_updates_only_sent_fields(client, payload):
-    contact_id = client.post(BASE, json=payload).json()["id"]
+    contact_id = client.post(BASE, json={**payload, "photo": PHOTO}).json()["id"]
     response = client.patch(f"{BASE}/{contact_id}", json={"phone": "+1-000-000-0000"})
     assert response.status_code == 200
     body = response.json()
     assert body["phone"] == "+1-000-000-0000"
+    assert body["photo"] == PHOTO
     assert body["first_name"] == "Ada"
     assert body["company"] == "Analytical Engines"
+
+
+def test_patch_can_clear_photo(client, payload):
+    contact_id = client.post(BASE, json={**payload, "photo": PHOTO}).json()["id"]
+    response = client.patch(f"{BASE}/{contact_id}", json={"photo": None})
+    assert response.status_code == 200
+    assert response.json()["photo"] is None
 
 
 def test_patch_duplicate_email_conflicts(client, payload):
@@ -115,7 +159,7 @@ def test_patch_same_email_is_allowed(client, payload):
 
 
 def test_put_replaces_contact(client, payload):
-    contact_id = client.post(BASE, json=payload).json()["id"]
+    contact_id = client.post(BASE, json={**payload, "photo": PHOTO}).json()["id"]
     response = client.put(
         f"{BASE}/{contact_id}",
         json={"first_name": "Grace", "last_name": "Hopper", "email": "grace@example.com"},
@@ -124,6 +168,7 @@ def test_put_replaces_contact(client, payload):
     body = response.json()
     assert body["full_name"] == "Grace Hopper"
     assert body["company"] is None  # omitted fields are cleared by PUT
+    assert body["photo"] is None
 
 
 def test_put_missing_contact_returns_404(client):
