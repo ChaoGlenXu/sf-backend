@@ -1,6 +1,6 @@
 from collections.abc import Generator
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -50,6 +50,19 @@ def init_db() -> None:
     from app import models  # noqa: F401  (register models on Base.metadata)
 
     Base.metadata.create_all(bind=engine)
+    _upgrade_contacts_schema()
+
+
+def _upgrade_contacts_schema() -> None:
+    """Apply small, backward-compatible upgrades for persistent databases."""
+    inspector = inspect(engine)
+    if "contacts" not in inspector.get_table_names():
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("contacts")}
+    if "photo" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE contacts ADD COLUMN photo TEXT"))
 
 
 def get_db() -> Generator[Session, None, None]:

@@ -1,5 +1,8 @@
 BASE = "/api/v1/contacts"
-PHOTO = "data:image/png;base64,aGVsbG8="
+PHOTO = (
+    "data:image/png;base64,"
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
 
 
 def test_health(client):
@@ -29,6 +32,20 @@ def test_create_contact_with_photo(client, payload):
 
 def test_create_rejects_invalid_photo(client, payload):
     response = client.post(BASE, json={**payload, "photo": "https://example.com/photo.png"})
+    assert response.status_code == 422
+
+
+def test_create_rejects_non_image_photo_data(client, payload):
+    response = client.post(
+        BASE,
+        json={**payload, "photo": "data:image/png;base64,aGVsbG8="},
+    )
+    assert response.status_code == 422
+
+
+def test_create_rejects_mismatched_photo_type(client, payload):
+    mislabeled_photo = PHOTO.replace("data:image/png", "data:image/jpeg")
+    response = client.post(BASE, json={**payload, "photo": mislabeled_photo})
     assert response.status_code == 422
 
 

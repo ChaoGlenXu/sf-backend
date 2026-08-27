@@ -2,7 +2,9 @@ import base64
 import binascii
 import re
 from datetime import datetime, timezone
+from io import BytesIO
 
+from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, computed_field, field_validator
 
 PHOTO_MAX_BYTES = 1_000_000
@@ -10,6 +12,7 @@ PHOTO_MAX_LENGTH = 1_400_000
 PHOTO_DATA_URL_RE = re.compile(
     r"^data:image/(png|jpeg|webp|gif);base64,([A-Za-z0-9+/]+={0,2})$"
 )
+PHOTO_FORMATS = {"png": "PNG", "jpeg": "JPEG", "webp": "WEBP", "gif": "GIF"}
 
 
 def _validate_photo(value: str | None) -> str | None:
@@ -31,6 +34,16 @@ def _validate_photo(value: str | None) -> str | None:
 
     if len(decoded) > PHOTO_MAX_BYTES:
         raise ValueError("Photo must be 1 MB or smaller.")
+
+    try:
+        with Image.open(BytesIO(decoded)) as image:
+            detected_format = image.format
+            image.verify()
+    except (UnidentifiedImageError, OSError, SyntaxError) as exc:
+        raise ValueError("Photo data is not a valid image.") from exc
+
+    if detected_format != PHOTO_FORMATS[match.group(1)]:
+        raise ValueError("Photo data does not match its declared image type.")
 
     return value
 
